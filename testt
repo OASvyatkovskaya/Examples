@@ -1,0 +1,442 @@
+import matplotlib.animation as animation
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+import matplotlib.pyplot as plt
+import numpy as np
+import tkinter as tk
+from tkinter import ttk
+
+
+
+'''
+    Defines the Simulation Class and the
+    Application Window with GUI and plotting canvas
+'''
+
+AE = 1.496e+11
+
+class Planet():
+    '''
+        The planet class contains the physics, the orbital motion of the planet around the central body
+    '''
+
+    def __init__(self, a, T, e, m, sim, c, hatch, markersize, name=None):
+
+        # Physical properties
+        self.semiMajor = a
+        self.orbitalPeriod = T
+        self.eccentricity = e
+        self.mass = m * M * 1e-6    # m is mass in solar mass units
+        # Included in simulation
+        self.simulate = sim
+        self.colour = c
+        self.linestyle = '-'
+        self.marker = 'o'
+        self.hatch = hatch
+        self.markersize = markersize
+        # Simulation quantities
+        self.eccentricAnomaly = None    # later angle in radians
+        self.position = None            # later given as (x, y) coordinate
+        self.velocity = None            # later given as (vx, vy) components
+        self.name=name
+        self.acceleration = None
+
+
+
+
+    def getDistance(self, name):
+        planet = SolarSystemSimulation.Planets[name]
+        x1, y1 = self.position
+        x2, y2 = planet.position
+        return ((x1-x2)**2+(y1-y2)**2)**0.5
+
+    def distanceToSun(self):
+        x, y = self.position
+        return np.sqrt(x**2 + y**2)
+
+    def getVelocity(self):
+        x, y = self.velocity
+        return np.sqrt(x**2 + y**2)
+
+
+
+    def calculateInitialPosition(self):
+        # Use distance and anomaly to calculate initial positions x0, y0
+        distance = self.semiMajor * (1. - self.eccentricity)
+        return (distance*np.sin(self.eccentricAnomaly), -distance*np.cos(self.eccentricAnomaly))
+
+
+    def calculateInitialVelocity(self, delta):
+        velocity = np.sqrt(G * M * (2./self.distanceToSun() - 1./self.semiMajor))
+        return (velocity * np.cos(self.eccentricAnomaly) - G * M * self.position[0]/self.distanceToSun()**3 * delta/2,
+                velocity * np.sin(self.eccentricAnomaly) - G * M * self.position[1]/self.distanceToSun()**3 * delta/2)
+
+    def updatePosition(self, delta):
+        # Return tuple with updated position
+        return tuple(i + delta * vi for i, vi in zip(self.position, self.velocity)) # for i in x, y
+    def updateAcceleration(self):
+
+        self.acceleration[0] = 0
+        self.acceleration[1] = 0
+
+        print("For planet", self.name)
+        for planet in SolarSystemSimulation.Planets.values():
+            if planet.name != self.name:
+                r_x = AE * (self.position[0]-planet.position[0])
+                r_y = AE* (self.position[1]-planet.position[1])
+                r = self.getDistance(planet.name) * AE
+                tmp = G * (planet.mass) / r ** 3
+                self.acceleration[0] += tmp * r_x
+                self.acceleration[1] += tmp * r_y
+        print('final acc', self.acceleration)
+        return self.acceleration
+    def updateVelocity(self, delta):
+        return tuple(i  - (delta * G * M * ri) / self.distanceToSun() ** 3 + delta * ai for i, ai, ri in zip(self.velocity, self.acceleration, self.position))
+
+
+
+
+class SolarSystemSimulation():
+    '''
+       This class handles the simulation parameters
+    '''
+
+    Planets = {}
+
+    def __init__(self):
+
+        self.delta = gui.stepsize.get() * 2*np.pi / (np.sqrt(G*M) * 365.256)   # integration timestep in Earth days
+        self.steps = round(365.256 * gui.duration.get() / gui.stepsize.get())  # integration time in Earth years
+
+
+        # ------
+        # Initialize Planets
+        # Units of AU and Year
+        Mercury = Planet(a=0.387, e=0.205, T=0.241, m=0.166014,     sim=gui.mercury.get(), c ='Tan', hatch= '-', markersize = 3, name="Mercury")
+        Venus   = Planet(a=0.723, e=0.007, T=0.615, m=2.08106272,   sim=gui.venus.get(),   c ='Peru', hatch= '-', markersize = 4, name="Venus")
+        Earth   = Planet(a=1.,    e=0.017, T=1.,    m=3.003486962,  sim=gui.earth.get(),   c ='Forestgreen', hatch= '-', markersize = 4, name="Earth")
+        Mars    = Planet(a=1.524, e=0.094, T=1.88,  m=0.3232371722, sim=gui.mars.get(),    c ='Coral', hatch= '-', markersize = 4, name="Mars")
+        Jupiter = Planet(a=5.203, e=0.049, T=11.9,  m=954.7919,     sim=gui.jupiter.get(), c ='Sandybrown', hatch= '-', markersize = 20, name="Jupiter")
+        Saturn  = Planet(a=9.58,  e=0.057, T=29.5,  m=285.885670,   sim=gui.saturn.get(),  c ='Gold', hatch= '-', markersize = 9, name="Saturn")
+        Uranus  = Planet(a=19.20, e=0.046, T=84,    m=43.66244,     sim=gui.uranus.get(),  c ='Royalblue', hatch= '-', markersize = 5, name="Uranus")
+        Neptune = Planet(a=30.06, e=0.011, T=164.8, m=51.51384,     sim=gui.neptune.get(), c ='Mediumblue', hatch= '-', markersize = 5, name="Neptune")
+
+        # For easier interaction between tkinter and class code, place the planet instances in a dict
+        SolarSystemSimulation.Planets = {
+           'Mercury':  Mercury,
+           'Venus':    Venus,
+           'Earth':    Earth,
+           'Mars':     Mars,
+           'Jupiter':  Jupiter,
+           'Saturn':   Saturn,
+           'Uranus':   Uranus,
+           'Neptune':  Neptune
+        }
+
+        # ------
+
+
+        # ------
+        # ------
+        # If planet is in simulation, determine its initial position and velocity
+        for key, planet in SolarSystemSimulation.Planets.copy().items():
+            if planet.simulate:
+                planet.eccentricAnomaly = 0 # here you may choose random start planets position
+                planet.position = planet.calculateInitialPosition()
+                planet.velocity = planet.calculateInitialVelocity(self.delta)
+                planet.acceleration = [0, 0]
+
+            else: # if planets are not part of the simulation, remove them
+                SolarSystemSimulation.Planets.pop(key)
+
+
+    def timeStep(self):
+        # Update planet position and velocity after one timestep
+        for planet in SolarSystemSimulation.Planets.values():
+            planet.updateAcceleration()
+            planet.position = planet.updatePosition(self.delta)
+            planet.velocity = planet.updateVelocity(self.delta)
+
+class App:
+    # ------
+    # Set up control window
+
+    def __init__(self, master):
+        self.master = master
+
+        # ------
+        # Upper Panel: Select Planets to Plot
+        self.planet_frame = ttk.LabelFrame(master, text='Choose Planets to Plot')
+        self.planet_frame.grid(row=1, columnspan=5, sticky='EW')
+
+        # Planets
+        self.mercury = tk.BooleanVar()
+        self.venus = tk.BooleanVar()
+        self.earth = tk.BooleanVar()
+        self.mars = tk.BooleanVar()
+        self.jupiter = tk.BooleanVar()
+        self.saturn = tk.BooleanVar()
+        self.uranus = tk.BooleanVar()
+        self.neptune = tk.BooleanVar()
+
+        self.plot_mercury = ttk.Checkbutton(self.planet_frame, text='Mercury', variable=self.mercury)
+        self.plot_mercury.grid(row=1, column=0, sticky='EW', padx=5, pady=5)
+        self.plot_venus = ttk.Checkbutton(self.planet_frame, text='Venus', variable=self.venus)
+        self.plot_venus.grid(row=1, column=1, sticky='EW', padx=5, pady=5)
+        self.plot_earth = ttk.Checkbutton(self.planet_frame, text='Earth', variable=self.earth)
+        self.plot_earth.grid(row=1, column=2, sticky='EW', padx=5, pady=5)
+        self.plot_mars = ttk.Checkbutton(self.planet_frame, text='Mars', variable=self.mars)
+        self.plot_mars.grid(row=1, column=3, sticky='EW', padx=5, pady=5)
+        self.plot_jupiter = ttk.Checkbutton(self.planet_frame, text='Jupiter', variable=self.jupiter)
+        self.plot_jupiter.grid(row=2, column=0, sticky='EW', padx=5, pady=5)
+        self.plot_saturn = ttk.Checkbutton(self.planet_frame, text='Saturn', variable=self.saturn)
+        self.plot_saturn.grid(row=2, column=1, sticky='EW', padx=5, pady=5)
+        self.plot_uranus = ttk.Checkbutton(self.planet_frame, text='Uranus', variable=self.uranus)
+        self.plot_uranus.grid(row=2, column=2, sticky='EW', padx=5, pady=5)
+        self.plot_neptune = ttk.Checkbutton(self.planet_frame, text='Neptune', variable=self.neptune)
+        self.plot_neptune.grid(row=2, column=3, sticky='EW', padx=5, pady=5)
+
+        # ------
+        # Other settings
+        self.suggestionButton = ttk.Button(master, text='Suggest Simulation Parameters', command=self.suggestSimParameters)
+        self.suggestionButton.grid(column=1, row=9, sticky='EW')
+        self.duration = tk.DoubleVar()
+
+        tk.Entry(textvariable=self.duration).grid(row=7, column=1, sticky='EW')
+        tk.Label( text='Integration Time in Earth Years').grid(row=7, column=2, sticky='E')
+
+        self.stepsize = tk.DoubleVar()      # Integration timestep in Earth days
+        tk.Entry(textvariable=self.stepsize).grid(row=8, column=1, sticky='EW')
+        tk.Label(text='Timestep in Earth days').grid(row=8, column=2, sticky='E')
+
+
+
+        self.animate_button = ttk.Button(master, text='Animate', command=self.simulation_animation)
+        self.animate_button.grid(column=1, row=4, sticky='EW')
+
+
+        # ------
+        # Set-up initial scenario for easy use
+
+        self.mercury.set(True)
+        self.venus.set(True)
+        self.earth.set(True)
+        self.mars.set(True)
+        self.jupiter.set(True)
+        self.duration.set(10)
+        self.stepsize.set(1)
+    def simulation_animation(self):
+        # ------
+        # Start simulation
+        Sim = SolarSystemSimulation()
+
+        # ------
+        # Create new window to plot the simulation
+        sim_window = tk.Toplevel()
+        sim_window.title('SolarSystemSimulation')
+        sim_window.focus_force()    # Auto-focus on window
+
+
+        fig, ax, elapsedTime = self.setupPlot(Sim)
+
+        # ------
+        # Create plotting canvas
+        canvas = FigureCanvasTkAgg(fig, sim_window)
+        canvas.draw()
+        canvas.get_tk_widget().pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
+
+        # Add interrupt button
+        # killswitch = ttk.Button(sim_window, text="Close Simulation", command=sim_window.destroy)
+        # killswitch.pack()
+
+        info = self.addInformation(ax)
+
+        # For each planet in simulation, add an empty line
+        planetTrajectories = {}
+        for key, planet in Sim.Planets.items():
+            line, = ax.plot([], [], ls=planet.linestyle, c=planet.colour, lw=0.5)
+            sphere, = ax.plot([], [], marker=planet.marker, c=planet.colour)
+            planetTrajectories[key] = (line, sphere)
+
+        # Add Sun
+        sun, = ax.plot((0, 0), c='yellow', marker='*', ls='', markersize=12)
+
+        def init():
+            # Initialize the animation
+            elapsedTime.set_text('')
+
+            trajectories = []
+            for line, sphere in planetTrajectories.values():
+                line.set_data([], [])
+                trajectories.append(line)
+                sphere.set_data([], [])
+                trajectories.append(sphere)
+
+            sun.set_data([], [])
+            trajectories.append(sun)
+
+            return trajectories
+
+        def animate(i):
+            Sim.timeStep()
+
+            # Update the planet trajectories
+            trajectories = []  # lines in plot
+            for key, planet in Sim.Planets.items():
+                # Append new position to line of trajectory
+                planetTrajectories[key][0].set_data(tuple(x + [xi] for x, xi in zip(planetTrajectories[key][0].get_data(), planet.position)))
+                trajectories.append(planetTrajectories[key][0])
+
+                # Move planet sphere to current trajectory
+                planetTrajectories[key][1].set_data(planet.position)
+                trajectories.append(planetTrajectories[key][1])
+
+            sun.set_data([0], [0])
+            trajectories.append(sun)
+
+            elapsedTimeNumber = i * gui.stepsize.get() / 365.256
+            info['elapsedTime'].set_text('Elapsed Time: {:.2f} Earth Years'.format(elapsedTimeNumber)+
+                                         "\nDistance between Mars and Jupiter: " + str(SolarSystemSimulation.Planets["Mars"].getDistance("Jupiter"))[:5])
+            trajectories.append(info['elapsedTime'])
+
+            return trajectories
+
+        ani = animation.FuncAnimation(fig, animate, frames=Sim.steps, interval=0, blit=True, init_func=init, repeat=False)
+        canvas.draw()
+
+
+
+    def movie(self):
+        # ------
+        # Start simulation
+        Sim = SolarSystemSimulation()
+
+        fig, ax, elapsedTime = self.setupPlot(Sim)
+
+        info = self.addInformation(ax)
+
+        # For each planet in simulation, add an empty line and store the instance in dict
+        planetTrajectories = {}
+        for key, planet in Sim.Planets.items():
+            line, = ax.plot([], [], ls=planet.linestyle, c=planet.colour, lw=0.5)
+            sphere, = ax.plot([], [], marker=planet.marker, c=planet.colour)
+            planetTrajectories[key] = (line, sphere)
+
+        # Add Sun
+        sun, = ax.plot([], [], c='orange', marker='o', ls='')
+
+        def init():
+            # Initialize the animation
+            trajectories = []
+            for line, sphere in planetTrajectories.values():
+                line.set_data([], [])
+                trajectories.append(line)
+                sphere.set_data([], [])
+                trajectories.append(sphere)
+                elapsedTime.set_text('')
+
+            sun.set_data([], [])
+            trajectories.append(sun)
+
+            return trajectories
+
+        def animate(i):
+            # Animate the simulation
+
+            # ------
+            # Update the planet positions
+            Sim.timeStep()
+
+            # Update the planet trajectories
+            trajectories = []  # lines in plot
+            for key, planet in Sim.Planets.items():
+                # Append new position to line of trajectory
+                planetTrajectories[key][0].set_data(tuple(x + [xi] for x, xi in zip(planetTrajectories[key][0].get_data(), planet.position)))
+                trajectories.append(planetTrajectories[key][0])
+
+                # Move planet sphere to current trajectory
+                planetTrajectories[key][1].set_data(planet.position)
+                trajectories.append(planetTrajectories[key][1])
+
+            sun.set_data([0], [0])
+            trajectories.append(sun)
+
+            elapsedTimeNumber = i * gui.stepsize.get() / 365.256
+            info['elapsedTime'].set_text('Elapsed Time: {:.2f} Earth years'.format(elapsedTimeNumber))
+            trajectories.append(info['elapsedTime'])
+            return trajectories
+
+        return 0
+
+
+    def setupPlot(self, Sim):
+        # ------
+        # Plot set-up
+        fig = plt.figure()
+        # Determine plot limits by finding planet with largest semi-major axis included in simulation
+        lim = 0.4
+        for planet in Sim.Planets.values():
+            if planet.simulate:
+                if planet.semiMajor > lim:
+                        lim = planet.semiMajor
+        lim *= 1.2
+        ax = fig.add_subplot(111, xlim=(-lim, lim), ylim=(-lim, lim), aspect='equal', autoscale_on=False)
+        #ax.set(xlabel='x / AU', ylabel='y / AU')
+        elapsedTime = ax.text(0.65, 0.95, '', transform=ax.transAxes)
+
+        # Move axis to centre
+        ax.spines['left'].set_position('center')
+        ax.spines['bottom'].set_position('center')
+
+        # Eliminate upper and right axes
+        ax.spines['right'].set_color('none')
+        ax.spines['top'].set_color('none')
+
+        # Show ticks in the left and lower axes only
+        ax.xaxis.set_ticks_position('bottom')
+        ax.yaxis.set_ticks_position('left')
+
+        # Make axes more subtle
+        ax.spines['left'].set_color('none')
+        ax.spines['bottom'].set_color('none')
+        ax.tick_params(axis='x', colors='none')
+        ax.tick_params(axis='y', colors='none')
+        ax.xaxis.label.set_color('none')
+        ax.yaxis.label.set_color('none')
+
+        plt.tight_layout()
+        return fig, ax, elapsedTime
+
+
+    def addInformation(self, ax):
+        info = {}
+        info['elapsedTime'] = ax.text(0.15, 0.93, '', transform=ax.transAxes)
+        return info
+
+
+
+
+    def suggestSimParameters(self):
+        # ------
+        # Initialize simulation
+        Sim = SolarSystemSimulation()
+
+        # Suggest timestep based on planet with smallest orbit included in simulation
+        # smallestOrbit = min([planet.orbitalPeriod for planet in Sim.Planets.values()])
+        # gui.stepsize.set(max([planet.orbitalPeriod for planet in Sim.Planets.values()])/ (min([planet.orbitalPeriod for planet in Sim.Planets.values()])) * 365 / 10000 )
+        gui.duration.set(round(max([planet.orbitalPeriod for planet in Sim.Planets.values()]), 2))
+
+
+if __name__ == '__main__':
+
+    # Some definitions
+    planets = ['Neptune', 'Uranus', 'Saturn', 'Jupiter', 'Mars', 'Earth', 'Venus', 'Mercury']
+    M = 1.998e30    # Solar Mass
+    G = 6.67e-11   # Gravitational Constant
+
+
+    # ------
+    # Start GUI
+    root = tk.Tk()
+    root.wm_title('SolarSystemOrbiter')
+    gui = App(root)
+    root.mainloop()
